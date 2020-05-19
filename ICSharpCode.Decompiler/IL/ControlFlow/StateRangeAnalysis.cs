@@ -185,10 +185,12 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 					// the C# compiler puts the call to a finally method outside the try-finally block.
 					finallyMethodToStateRange.Add((IMethod)call.Method.MemberDefinition, stateRange);
 					return LongSet.Empty; // return Empty since we executed user code (the finally method)
-				case StObj stobj when mode == StateRangeAnalysisMode.IteratorMoveNext:
+				case StObj stobj when mode == StateRangeAnalysisMode.IteratorMoveNext || mode == StateRangeAnalysisMode.IteratorDispose:
 					{
 						if (stobj.MatchStFld(out var target, out var field, out var value)
-							&& target.MatchLdThis() && field.MemberDefinition == stateField && value.MatchLdcI4(-1))
+							&& target.MatchLdThis() && ((field.MemberDefinition == stateField && value.MatchLdcI4(-1)) ||
+							(mode == StateRangeAnalysisMode.IteratorDispose && field.MemberDefinition.Name == "$disposing" &&
+								value.MatchLdcI4(1))))
 						{
 							// Mono resets the state field during MoveNext();
 							// don't consider this user code.

@@ -165,15 +165,17 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 			// (though some may point to now-deleted blocks)
 			newBody.SortBlocks(deleteUnreachableBlocks: true);
 
-			if (!isCompiledWithMono) {
+			if (finallyMethodToStateRange != null) {
 				DecompileFinallyBlocks();
 				ReconstructTryFinallyBlocks(function);
 			}
 
+			CleanSkipFinallyBodies(function);
+
+			InlineFinallyMethods(function);
+
 			context.Step("Translate fields to local accesses", function);
 			TranslateFieldsToLocalAccess(function, function, fieldToParameterMap, isCompiledWithMono);
-
-			CleanSkipFinallyBodies(function);
 
 			// On mono, we still need to remove traces of the state variable(s):
 			if (isCompiledWithMono) {
@@ -488,6 +490,11 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 			} else {
 				// Non-Mono: analyze try-finally structure in Dispose()
 				disposeMethod = metadata.GetTypeDefinition(enumeratorType).GetMethods().FirstOrDefault(m => metadata.GetString(metadata.GetMethodDefinition(m).Name) == "System.IDisposable.Dispose");
+				if (disposeMethod.IsNil && isCompiledWithMono) {
+					disposeMethod = metadata.GetTypeDefinition(enumeratorType).GetMethods().FirstOrDefault(m => metadata.GetString(metadata.GetMethodDefinition(m).Name) == "Dispose");
+					if (disposeMethod.IsNil)
+						return;
+				}
 				var function = CreateILAst(disposeMethod, context);
 				var rangeAnalysis = new StateRangeAnalysis(StateRangeAnalysisMode.IteratorDispose, stateField);
 				rangeAnalysis.AssignStateRanges(function.Body, LongSet.Universe);
@@ -1041,6 +1048,31 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		}
 		#endregion
 
+		private void InlineFinallyMethods(ILFunction function)
+		{
+			if (!isCompiledWithMono)
+				return;
+			context.StepStartGroup("Inline finally methods", function);
+			foreach (var tryFinally in function.Descendants.OfType<TryFinally>()) {
+				Block entryPoint = AsyncAwaitDecompiler.GetBodyEntryPoint(tryFinally.FinallyBlock as BlockContainer);
+				if (entryPoint != null
+					&& entryPoint.Instructions.Count == 2
+					&& entryPoint.Instructions[1] is Leave
+					&& entryPoint.Instructions[0] is Call call
+					&& call.Arguments.Count == 1 && call.Arguments[0].MatchLdThis()
+					//&& decompiledFinallyMethods.TryGetValue((IMethod)call.Method.MemberDefinition, out var finallyMethod)) {
+					&& call.Method.DeclaringTypeDefinition.MetadataToken == enumeratorType) {
+					context.Step("Inline finally method in try-finally", tryFinally);
+					var finallyFunction = CreateILAst((MethodDefinitionHandle)call.Method.MetadataToken, context);
+					finallyFunction.ReleaseRef(); // make body reusable outside of function
+					var vars = finallyFunction.Variables.ToArray();
+					finallyFunction.Variables.Clear();
+					function.Variables.AddRange(vars);
+					tryFinally.FinallyBlock = finallyFunction.Body;
+				}
+			}
+			context.StepEndGroup(keepIfEmpty: true);
+		}
 
 		/// <summary>
 		/// Eliminates usage of doFinallyBodies
@@ -1051,7 +1083,7 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 				return; // only mono-compiled code uses skipFinallyBodies
 			}
 			context.StepStartGroup("CleanSkipFinallyBodies", function);
-			Block entryPoint = AsyncAwaitDecompiler.GetBodyEntryPoint(function.Body as BlockContainer);
+			//Block entryPoint = AsyncAwaitDecompiler.GetBodyEntryPoint(function.Body as BlockContainer);
 			if (skipFinallyBodies.StoreInstructions.Count != 0 || skipFinallyBodies.AddressCount != 0) {
 				// misdetected another variable as doFinallyBodies?
 				// Fortunately removing the initial store of 0 is harmless, as we
@@ -1059,7 +1091,7 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 				return;
 			}
 			foreach (var tryFinally in function.Descendants.OfType<TryFinally>()) {
-				entryPoint = AsyncAwaitDecompiler.GetBodyEntryPoint(tryFinally.FinallyBlock as BlockContainer);
+				Block entryPoint = AsyncAwaitDecompiler.GetBodyEntryPoint(tryFinally.FinallyBlock as BlockContainer);
 				if (entryPoint?.Instructions[0] is IfInstruction ifInst) {
 					if (ifInst.Condition.MatchLogicNot(out var logicNotArg) && logicNotArg.MatchLdLoc(skipFinallyBodies)) {
 						context.Step("Remove if (skipFinallyBodies) from try-finally", tryFinally);
