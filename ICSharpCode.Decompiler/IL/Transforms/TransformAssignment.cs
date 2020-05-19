@@ -197,6 +197,18 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			}
 		}
 
+		static ILInstruction UnwrapImplicitConv(ILInstruction inst, ref IType targetType) //out Call implicitCall)
+		{
+			var implicitCall = inst as Call;
+			if (implicitCall != null && implicitCall.Method.IsOperator && implicitCall.Arguments.Count == 1 &&
+				implicitCall.Method.Name == "op_Implicit" && implicitCall.Method.ReturnType == targetType) {
+				targetType = implicitCall.Method.Parameters[0].Type;
+				return implicitCall.Arguments[0];
+			} else {
+				return inst;
+			}
+		}
+
 		static bool ValidateCompoundAssign(BinaryNumericInstruction binary, Conv conv, IType targetType)
 		{
 			if (!NumericCompoundAssign.IsBinaryCompatibleWithType(binary, targetType))
@@ -275,14 +287,19 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				}
 			}
 			ILInstruction newInst;
-			if (UnwrapSmallIntegerConv(setterValue, out var smallIntConv) is BinaryNumericInstruction binary) {
-				if (!IsMatchingCompoundLoad(binary.Left, compoundStore, forbiddenVariable: storeInSetter?.Variable))
+			IType orgTargetType = targetType; // may be changed by UnwrapImplicitConv
+			if (UnwrapImplicitConv(UnwrapSmallIntegerConv(setterValue, out var smallIntConv), ref targetType)
+				is BinaryNumericInstruction binary) {
+				IType binaryType = targetType;
+				ILInstruction target = UnwrapImplicitConv(binary.Left, ref targetType);
+				if (targetType != orgTargetType ||
+					!IsMatchingCompoundLoad(target, compoundStore, forbiddenVariable: storeInSetter?.Variable))
 					return false;
-				if (!ValidateCompoundAssign(binary, smallIntConv, targetType))
+				if (!ValidateCompoundAssign(binary, smallIntConv, binaryType))
 					return false;
 				context.Step($"Compound assignment (binary.numeric)", compoundStore);
 				newInst = new NumericCompoundAssign(
-					binary, binary.Left, binary.Right,
+					binary, target, binary.Right,
 					targetType, CompoundAssignmentType.EvaluatesToNewValue);
 			} else if (setterValue is Call operatorCall && operatorCall.Method.IsOperator) {
 				if (operatorCall.Arguments.Count == 0)

@@ -631,7 +631,8 @@ namespace ICSharpCode.Decompiler.CSharp
 					parameterType = parameter.Type;
 				}
 
-				arg = arg.ConvertTo(parameterType, expressionBuilder, allowImplicitConversion: arg.Type.Kind != TypeKind.Dynamic);
+				arg = arg.ConvertTo(parameterType, expressionBuilder, allowImplicitConversion: arg.Type.Kind != TypeKind.Dynamic &&
+					(!method.IsOperator || method.Name != "op_Implicit"));
 
 				if (parameter.IsOut) {
 					arg = ExpressionBuilder.ChangeDirectionExpressionToOut(arg);
