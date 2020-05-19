@@ -62,10 +62,15 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			}
 		}
 
-		protected internal override void VisitBlock(Block block)
+		protected internal override void VisitBlockContainer(BlockContainer blockContainer)
 		{
 			// Don't visit child blocks; since this is a block transform
 			// we know those were already handled previously.
+			/*
+			if (!(block.Parent is BlockContainer)) {
+				Default(block);
+			}
+			*/
 		}
 
 		protected internal override void VisitComp(Comp inst)
