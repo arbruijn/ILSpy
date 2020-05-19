@@ -114,7 +114,8 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 						block.Instructions.Remove(inst);
 					instructionsToRemove.Clear();
 				}
-				break;
+				if (!parameters.Any())
+					break;
 			}
 		}
 
